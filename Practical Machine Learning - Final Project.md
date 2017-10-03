@@ -389,3 +389,8 @@ Predicting final test data with Random Forrest model.
 predictTEST <- predict(modfit_rf, newdata=testing)
 predictTEST
 ```
+
+```{r}
+##  [1] B A B A A E D B A A B C B A E E A B B B
+## Levels: A B C D E
+```
