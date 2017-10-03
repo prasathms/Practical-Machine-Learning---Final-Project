@@ -1,0 +1,152 @@
+---
+title: "Practical Machine Learning - Final Project"
+author: "Prasath"
+date: "October 2, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+##Getting and Cleaning data
+
+Below are the steps involved in getting and cleaning data
+1. Include necessary R packages and import data files.
+```{r}
+suppressMessages(library(readr))
+suppressMessages(library(caret))
+suppressMessages(library(rpart))
+suppressMessages(library(randomForest))
+suppressMessages(library(ROCR))
+suppressMessages(library(purrr))
+suppressMessages(library(tidyr))
+```
+2. Importing datafiles into R dataframe and display number of NAs for each column.
+```{r}
+training <- suppressWarnings(suppressMessages(read_csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")))
+testing <- suppressWarnings(suppressMessages(read_csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")))
+
+#display NA counts
+training %>%
+  map_df(function(x) sum(is.na(x))) %>%
+  gather(feature, num_nulls) %>%
+  print(n = 15)
+```
+3. Remove columns with NAs greater than 19K rows
+And remove first 6 columns which contains ID, Names and timestamps
+```{r}
+#remove columns with more than 19K NAs
+columns_with_na <- c(12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,50,51,52,53,54,55,56,57,58,59,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,103,104,105,106,107,108,109,110,111,112,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,141,142,143,144,145,146,147,148,149,150)
+training <- training[,-columns_with_na]
+#remove first 7 columns, they are IDs,names and timestamps
+training <- training[,-c(1:6)]
+```
+4. Insert missing values with Median and validate data frame for any NAs
+```{r}
+#insert missing values with Median.
+training$magnet_dumbbell_z[is.na(training$magnet_dumbbell_z)] <- median(training$magnet_dumbbell_z, na.rm = T)
+training$magnet_forearm_y[is.na(training$magnet_forearm_y)] <- median(training$magnet_forearm_y, na.rm = T)
+training$magnet_forearm_z[is.na(training$magnet_forearm_z)] <- median(training$magnet_forearm_z, na.rm = T)
+
+#Validate all columns for NAs
+training %>%
+  map_df(function(x) sum(is.na(x))) %>%
+  gather(feature, num_nulls) %>%
+  print(n = 15)
+```
+5. Change column data type for target variable "Classe" to factor and align the testing dataset with same number of columns as training.
+```{r}
+suppressMessages(library(dplyr))
+#check for column data type
+#sapply(training, function(x) class(x))
+#change data type to factor
+training$classe <- factor(training$classe)
+
+#Apply same data prepration for testing dataset and remove target variable "Classe"
+testing <- testing[,-columns_with_na]
+testing <- testing[,-c(1:6)]
+```
+
+#Classification Algorithm
+
+In this section, different classification algorithm will be applied to training data and compare its accuracy. To start with, lets split the training data into two parts.
+
+```{r}
+#split training data into two sets to train and set models
+inTrain <- createDataPartition(y=training$classe, p = 0.60, list=FALSE)
+mytraining <- training[inTrain,]
+mytesting <- training[-inTrain,]
+```
+
+
+Setting seed and making the cross validation to 3, it will split the training data into 3 parts for cross validation.
+
+####Prediction with Random forrest
+```{r}
+set.seed(123)
+tc <- trainControl(method = "cv", number = 3)
+modfit_rf <- train(classe ~ ., data = mytraining, method = "rf", trControl = tc)
+pred_rf <- predict(modfit_rf, mytesting)
+confusionMatrix(pred_rf, mytesting$classe)
+plot(modfit_rf)
+```
+
+####Prediction with Linear discriminant analysis (LDA)
+```{r}
+set.seed(123)
+modfit_lda <- train(classe ~ ., data = mytraining, method = "lda", trControl = tc)
+pred_lda <- predict(modfit_lda, mytesting)
+confusionMatrix(pred_lda, mytesting$classe)
+```
+
+####Prediction with Recursive partitioning for classification (RPart)
+```{r}
+set.seed(123)
+modfit_rpart <- train(classe ~ ., data = mytraining, method = "rpart", trControl = tc)
+pred_rpart <- predict(modfit_rpart, mytesting)
+confusionMatrix(pred_rpart, mytesting$classe)
+```
+
+
+####Prediction with gradient boosting machine (GBM)
+```{r}
+set.seed(123)
+modfit_gbm <- train(classe ~ ., data = mytraining, method = "gbm", trControl = tc, verbose = FALSE)
+pred_gbm <- predict(modfit_gbm, mytesting)
+confusionMatrix(pred_gbm, mytesting$classe)
+plot(modfit_gbm)
+```
+
+####Prediction with combined with Random forrest
+```{r}
+predDF <- data.frame(pred_rf, pred_gbm, pred_lda, classe = mytesting$classe)
+combModFit <- train(classe ~ ., method = "rf", data = predDF,trControl=tc)
+combPred <- predict(combModFit, predDF)
+confusionMatrix(combPred, mytesting$classe)
+```
+
+#Compare all the models
+using machine learning benchmark package, compare all the models
+
+```{r}
+library(mlbench)
+results <- resamples(list(lda=modfit_lda, rf = modfit_rf,gbm=modfit_gbm,combined=combModFit))
+# summarize the distributions
+summary(results)
+# boxplots of results
+bwplot(results)
+```
+
+#Conclusion 
+Baed on the comparsion box plot, Combined model outperformed with all other models.
+Predicting final test data with Random Forrest model.
+```{r}
+#final testing data set
+#predict(combModFit, testing)
+predictTEST <- predict(modfit_rf, newdata=testing)
+predictTEST
+```
